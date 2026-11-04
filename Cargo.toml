@@ -1,0 +1,15 @@
+[package]
+name = "usiem-geoip"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "GeoIP and ASN enrichment for uSIEM events from MaxMind DB (.mmdb) files."
+license = "MIT"
+
+[dependencies]
+usiem = { path = "../usiem" }
+maxminddb = { version = "0.32", features = ["mmap"] }
+serde = { version = "1", features = ["derive"] }
+
+[profile.dev.package."*"]
+opt-level = 2
