@@ -4,7 +4,7 @@ use maxminddb::{MaxMindDbError, Mmap, Reader};
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -22,8 +22,10 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Every kind, in slot order.
     pub const ALL: [Kind; 2] = [Kind::City, Kind::Asn];
 
+    /// The kind's name as [`FromStr`] parses it: `city` or `asn`.
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::City => "city",
@@ -63,23 +65,34 @@ impl FromStr for Kind {
 
 /// What a validated file contains, from its metadata section.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DatasetMeta {
+    /// The kind the file was opened as.
     pub kind: Kind,
     /// The file's own `database_type`, e.g. `GeoLite2-City`.
     pub database_type: String,
     /// When the database was built, in seconds since the Unix epoch.
     pub build_epoch: u64,
+    /// Nodes in the search tree.
     pub node_count: u32,
-    /// 4 or 6.
+    /// The IP version of the search tree: 4 or 6. An IPv4 database has no
+    /// IPv6 data.
     pub ip_version: u16,
 }
 
+/// Why a database file was refused, or a kind name not understood.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum GeoError {
     /// The file could not be read, or is not a MaxMind DB.
     Open(String),
     /// The file is a valid MaxMind DB of a different kind.
-    WrongKind { expected: Kind, found: String },
+    WrongKind {
+        /// The kind the caller asked for.
+        expected: Kind,
+        /// The file's own `database_type`.
+        found: String,
+    },
     /// The file's search tree or data section is corrupt.
     Corrupt(String),
     /// Not `city` or `asn`.
@@ -103,9 +116,18 @@ impl std::error::Error for GeoError {}
 
 /// Addresses looked up while validating: a lookup error on these means the
 /// data section is unusable, even when the tree verifies.
-const PROBES: [&str; 4] = ["1.1.1.1", "8.8.8.8", "2001:4860:4860::8888", "81.2.69.142"];
+const PROBES: [IpAddr; 4] = [
+    IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+    IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+    IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888)),
+    IpAddr::V4(Ipv4Addr::new(81, 2, 69, 142)),
+];
 
-/// One opened, validated database file.
+/// One opened, validated database file, memory-mapped.
+///
+/// The file must not be modified or truncated while this value (or any
+/// clone of an `Arc` holding it) is alive: see the crate docs on
+/// [the memory map contract](crate#the-memory-map-contract).
 pub struct MmdbFile {
     reader: Reader<Mmap>,
     meta: DatasetMeta,
@@ -128,18 +150,25 @@ impl MmdbFile {
     ///
     /// The file must never be modified while it is open. Callers install
     /// databases under new names and only ever delete old ones.
+    ///
+    /// # Errors
+    ///
+    /// - [`GeoError::Open`] when the file cannot be read or mapped, or is
+    ///   not a MaxMind DB (no metadata section, unsupported format).
+    /// - [`GeoError::WrongKind`] when its `database_type` is not `kind`.
+    /// - [`GeoError::Corrupt`] when the search tree or data section fails
+    ///   verification, or a probe lookup cannot be decoded as `kind`.
     pub fn open(path: impl AsRef<Path>, kind: Kind) -> Result<Self, GeoError> {
         let file = MmdbFile::open_installed(path, kind)?;
         file.reader
             .verify()
             .map_err(|e| GeoError::Corrupt(e.to_string()))?;
-        for probe in PROBES {
-            let ip: IpAddr = probe.parse().expect("valid probe address");
+        for ip in PROBES {
             if file.meta.ip_version == 4 && ip.is_ipv6() {
                 continue;
             }
             file.probe(ip)
-                .map_err(|e| GeoError::Corrupt(format!("lookup of {probe}: {e}")))?;
+                .map_err(|e| GeoError::Corrupt(format!("lookup of {ip}: {e}")))?;
         }
         Ok(file)
     }
@@ -147,11 +176,23 @@ impl MmdbFile {
     /// Like [`MmdbFile::open`] but only checks the kind: for files that
     /// passed `open` when they were installed. Skips the full-file
     /// `verify`, which takes seconds on a large City database.
+    ///
+    /// A corrupt file opened this way is not unsound: lookups into it fail,
+    /// and [`MmdbGeo`] counts them in [`MmdbGeo::lookup_errors`].
+    ///
+    /// # Errors
+    ///
+    /// [`GeoError::Open`] or [`GeoError::WrongKind`], as for
+    /// [`MmdbFile::open`].
     pub fn open_installed(path: impl AsRef<Path>, kind: Kind) -> Result<Self, GeoError> {
         let path = path.as_ref();
-        // SAFETY: dataset files are written once under a fresh name, then
-        // only read or deleted, never modified or truncated in place
-        // (see the module docs).
+        // SAFETY: `open_mmap` is unsafe only because the mapped bytes must
+        // not change while the map lives. That is this type's documented
+        // caller contract (the crate docs' memory map contract): files are
+        // written once under a fresh name, then only read or deleted, never
+        // modified or truncated in place. Every other invariant (bounds,
+        // pointers, UTF-8) is checked by `maxminddb` on each access.
+        #[allow(unsafe_code, reason = "the one memory map, see SAFETY above")]
         let reader =
             unsafe { Reader::open_mmap(path) }.map_err(|e| GeoError::Open(e.to_string()))?;
         let md = reader.metadata();
@@ -175,10 +216,12 @@ impl MmdbFile {
         })
     }
 
+    /// What the file contains, from its metadata.
     pub fn meta(&self) -> &DatasetMeta {
         &self.meta
     }
 
+    /// The path the file was opened from.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -309,6 +352,7 @@ impl MmdbGeo {
         next
     }
 
+    /// The database installed in `kind`'s slot, if any.
     pub fn file(&self, kind: Kind) -> Option<&Arc<MmdbFile>> {
         match kind {
             Kind::City => self.city.as_ref(),
@@ -331,7 +375,7 @@ impl MmdbGeo {
     pub fn lookup(&self, ip: IpAddr) -> Option<GeoIp> {
         let ip = match ip {
             IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
-            v4 => v4,
+            IpAddr::V4(_) => ip,
         };
         let mut out = GeoIp::default();
         let mut found = false;
@@ -366,8 +410,8 @@ impl NetworkDataset<GeoIp> for MmdbGeo {
         [&self.city, &self.asn]
             .into_iter()
             .flatten()
-            .map(|f| f.meta.node_count as usize)
-            .sum()
+            .map(|f| usize::try_from(f.meta.node_count).unwrap_or(usize::MAX))
+            .fold(0, usize::saturating_add)
     }
 }
 

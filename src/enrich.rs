@@ -3,6 +3,7 @@
 use crate::handle::GeoHandle;
 use crate::mmdb::MmdbGeo;
 use std::collections::HashMap;
+use std::fmt;
 use std::net::IpAddr;
 use std::sync::Arc;
 use usiem::event::fields as f;
@@ -10,7 +11,7 @@ use usiem::event::{CoreEvent, FieldValue};
 use usiem::processing::enrichment::GeoIp;
 use usiem::processing::lookup::is_non_public_addr;
 
-/// Lookups remembered per worker before the cache is cleared.
+/// Addresses a [`GeoEnricher`] remembers before it clears its cache.
 pub const DEFAULT_CACHE: usize = 4096;
 
 /// The address fields enriched, with the fields written for each.
@@ -52,6 +53,9 @@ const TARGETS: [Target; 2] = [
 ///
 /// Call [`GeoEnricher::refresh`] once per batch to pick up swapped
 /// databases, then [`GeoEnricher::enrich`] per event.
+///
+/// Answers, including "not found", are cached per address. When the cache
+/// holds `capacity` addresses it is cleared, and a swap clears it too.
 pub struct GeoEnricher {
     handle: Arc<GeoHandle>,
     generation: u64,
@@ -60,11 +64,26 @@ pub struct GeoEnricher {
     capacity: usize,
 }
 
+impl fmt::Debug for GeoEnricher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeoEnricher")
+            .field("generation", &self.generation)
+            .field("geo", &self.geo)
+            .field("cached", &self.cache.len())
+            .field("capacity", &self.capacity)
+            .finish_non_exhaustive()
+    }
+}
+
 impl GeoEnricher {
+    /// An enricher over `handle` with a cache of [`DEFAULT_CACHE`] addresses,
+    /// starting from the handle's current databases.
     pub fn new(handle: Arc<GeoHandle>) -> Self {
         GeoEnricher::with_capacity(handle, DEFAULT_CACHE)
     }
 
+    /// Like [`GeoEnricher::new`], with a cache of `capacity` addresses (at
+    /// least one).
     pub fn with_capacity(handle: Arc<GeoHandle>, capacity: usize) -> Self {
         let (generation, geo) = handle.snapshot();
         GeoEnricher {

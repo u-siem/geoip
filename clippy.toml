@@ -2,3 +2,5 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-print-in-tests = true
 allow-panic-in-tests = true
+# Product names that read better without backticks.
+doc-valid-idents = ["GeoIP", "GeoIP2", "GeoLite2", "MaxMind", ".."]

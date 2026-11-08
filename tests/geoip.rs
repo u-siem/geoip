@@ -14,13 +14,13 @@ const ASN: &str = "tests/data/GeoLite2-ASN-Test.mmdb";
 const COUNTRY: &str = "tests/data/GeoIP2-Country-Test.mmdb";
 
 fn both() -> MmdbGeo {
-    let city = Arc::new(MmdbFile::open(CITY, Kind::City).unwrap());
-    let asn = Arc::new(MmdbFile::open(ASN, Kind::Asn).unwrap());
+    let city = Arc::new(MmdbFile::open(CITY, Kind::City).expect("city test db"));
+    let asn = Arc::new(MmdbFile::open(ASN, Kind::Asn).expect("asn test db"));
     MmdbGeo::empty().with(city).with(asn)
 }
 
 fn ip(s: &str) -> IpAddr {
-    s.parse().unwrap()
+    s.parse().expect("test address")
 }
 
 fn event(fields: &[(&str, FieldValue)]) -> CoreEvent {
@@ -46,7 +46,7 @@ fn text(e: &CoreEvent, key: &str) -> Option<String> {
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("usiem-geoip-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
 
@@ -218,7 +218,7 @@ fn refresh_picks_up_a_swap_and_drops_the_cache() {
     assert_eq!(text(&e, "source.geo.city_name").as_deref(), Some("London"));
 
     // Installing ASN keeps the city database.
-    let asn = Arc::new(MmdbFile::open(ASN, Kind::Asn).unwrap());
+    let asn = Arc::new(MmdbFile::open(ASN, Kind::Asn).expect("asn test db"));
     handle.update(|g| g.with(asn));
     enricher.refresh();
     let mut e = event(&[("source.ip", FieldValue::Str("89.160.20.128".into()))]);
@@ -247,7 +247,7 @@ fn refresh_picks_up_a_swap_and_drops_the_cache() {
 #[test]
 fn swapping_under_concurrent_readers() {
     let city = Arc::new(MmdbFile::open(CITY, Kind::City).unwrap());
-    let asn = Arc::new(MmdbFile::open(ASN, Kind::Asn).unwrap());
+    let asn = Arc::new(MmdbFile::open(ASN, Kind::Asn).expect("asn test db"));
     let handle = Arc::new(GeoHandle::new(MmdbGeo::empty().with(city.clone())));
     let stop = Arc::new(AtomicBool::new(false));
     let reads = Arc::new(AtomicU64::new(0));
