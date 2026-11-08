@@ -292,3 +292,145 @@ fn swapping_under_concurrent_readers() {
     }
     assert_eq!(handle.generation(), i);
 }
+
+/// A minimal IPv4-only MaxMind DB (record size 24) with one network,
+/// `1.0.0.0/8`, in Australia. MaxMind's test files are all IPv6 trees, so
+/// this is built here, following the MaxMind DB format specification.
+fn ipv4_only_city_db() -> Vec<u8> {
+    fn text(out: &mut Vec<u8>, s: &str) {
+        let len = u8::try_from(s.len()).expect("short string");
+        assert!(len < 29);
+        out.push(0x40 | len);
+        out.extend_from_slice(s.as_bytes());
+    }
+    fn map(out: &mut Vec<u8>, entries: u8) {
+        out.push(0xe0 | entries);
+    }
+    fn uint16(out: &mut Vec<u8>, v: u16) {
+        out.push(0xa0 | 2);
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    fn uint32(out: &mut Vec<u8>, v: u32) {
+        out.push(0xc0 | 4);
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    fn uint64(out: &mut Vec<u8>, v: u64) {
+        out.extend_from_slice(&[8, 9 - 7]);
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    fn array(out: &mut Vec<u8>, items: u8) {
+        out.extend_from_slice(&[items, 11 - 7]);
+    }
+    fn record(out: &mut Vec<u8>, v: u32) {
+        out.extend_from_slice(&v.to_be_bytes()[1..]);
+    }
+
+    const NODES: u32 = 8;
+    let mut db = Vec::new();
+    // Node i branches on bit i of 00000001: the matching side goes on to
+    // node i + 1 (the last one to data offset 0), the other side is empty.
+    for i in 0..NODES {
+        let next = if i + 1 == NODES { NODES + 16 } else { i + 1 };
+        let (left, right) = if i + 1 == NODES {
+            (NODES, next)
+        } else {
+            (next, NODES)
+        };
+        record(&mut db, left);
+        record(&mut db, right);
+    }
+    db.extend_from_slice(&[0; 16]);
+
+    map(&mut db, 1);
+    text(&mut db, "country");
+    map(&mut db, 2);
+    text(&mut db, "iso_code");
+    text(&mut db, "AU");
+    text(&mut db, "names");
+    map(&mut db, 1);
+    text(&mut db, "en");
+    text(&mut db, "Australia");
+
+    db.extend_from_slice(b"\xab\xcd\xefMaxMind.com");
+    map(&mut db, 9);
+    text(&mut db, "binary_format_major_version");
+    uint16(&mut db, 2);
+    text(&mut db, "binary_format_minor_version");
+    uint16(&mut db, 0);
+    text(&mut db, "build_epoch");
+    uint64(&mut db, 1_700_000_000);
+    text(&mut db, "database_type");
+    text(&mut db, "Test-City-IPv4");
+    text(&mut db, "description");
+    map(&mut db, 1);
+    text(&mut db, "en");
+    text(&mut db, "IPv4-only test database");
+    text(&mut db, "ip_version");
+    uint16(&mut db, 4);
+    text(&mut db, "languages");
+    array(&mut db, 1);
+    text(&mut db, "en");
+    text(&mut db, "node_count");
+    uint32(&mut db, NODES);
+    text(&mut db, "record_size");
+    uint16(&mut db, 24);
+    db
+}
+
+#[test]
+fn ipv6_in_an_ipv4_only_database_is_not_found_not_an_error() {
+    let path = scratch("ipv4").join("city-v4.mmdb");
+    std::fs::write(&path, ipv4_only_city_db()).unwrap();
+    let file = MmdbFile::open(&path, Kind::City).unwrap();
+    assert_eq!(file.meta().ip_version, 4);
+    let geo = MmdbGeo::empty().with(Arc::new(file));
+
+    let au = geo.lookup(ip("1.2.3.4")).unwrap();
+    assert_eq!(au.country_code.as_deref(), Some("AU"));
+    assert_eq!(au.country.as_deref(), Some("Australia"));
+    assert_eq!(
+        geo.lookup(ip("::ffff:1.2.3.4"))
+            .unwrap()
+            .country_code
+            .as_deref(),
+        Some("AU")
+    );
+    assert!(geo.lookup(ip("2.2.3.4")).is_none());
+    // Used to count as a lookup error on every IPv6 address.
+    assert!(geo.lookup(ip("2001:4860:4860::8888")).is_none());
+    assert_eq!(geo.lookup_errors(), 0);
+
+    let mut enricher = GeoEnricher::new(Arc::new(GeoHandle::new(geo.clone())));
+    let mut e = event(&[("source.ip", FieldValue::Str("2001:4860::1".into()))]);
+    assert!(!enricher.enrich(&mut e));
+    assert_eq!(geo.lookup_errors(), 0);
+}
+
+#[test]
+fn empty_and_corrupt_files_error_without_panicking() {
+    let dir = scratch("corrupt");
+    let empty = dir.join("empty.mmdb");
+    std::fs::write(&empty, b"").unwrap();
+    assert!(matches!(
+        MmdbFile::open(&empty, Kind::City),
+        Err(GeoError::Open(_))
+    ));
+    assert!(MmdbFile::open(dir.join("missing.mmdb"), Kind::City).is_err());
+
+    // A file that skipped `open`'s verification: the tree and data are
+    // garbage, but the metadata is intact. Lookups fail and are counted.
+    let mut bytes = std::fs::read(CITY).unwrap();
+    let meta = bytes.len() - 2048;
+    for (i, b) in bytes[..meta].iter_mut().enumerate() {
+        *b = u8::try_from(i * 131 % 251).unwrap();
+    }
+    let garbage = dir.join("garbage-tree.mmdb");
+    std::fs::write(&garbage, &bytes).unwrap();
+    assert!(MmdbFile::open(&garbage, Kind::City).is_err());
+    let file = MmdbFile::open_installed(&garbage, Kind::City).unwrap();
+    let geo = MmdbGeo::empty().with(Arc::new(file));
+    for i in 0..=255u8 {
+        let _ = geo.lookup(IpAddr::from([i, 1, 2, 3]));
+        let _ = geo.lookup(IpAddr::from([0x2001, u16::from(i), 0, 0, 0, 0, 0, 1]));
+    }
+}

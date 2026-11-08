@@ -18,6 +18,8 @@ First public release.
   lookups. `open_installed` checks only the kind, for files already validated.
 - `MmdbGeo`: a City and an optional ASN database queried together,
   implementing uSIEM's `NetworkDataset<GeoIp>` and `GeoIpDataset`.
+  IPv4-mapped IPv6 addresses are looked up as IPv4; other IPv6 addresses read
+  as "not found" in an IPv4-only database.
 - `GeoHandle`: the live databases, replaced atomically with `swap` and
   `update`.
 - `GeoEnricher`: the per-worker step that writes the ECS

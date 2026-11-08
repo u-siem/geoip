@@ -164,7 +164,7 @@ impl MmdbFile {
             .verify()
             .map_err(|e| GeoError::Corrupt(e.to_string()))?;
         for ip in PROBES {
-            if file.meta.ip_version == 4 && ip.is_ipv6() {
+            if !file.covers(ip) {
                 continue;
             }
             file.probe(ip)
@@ -234,7 +234,16 @@ impl MmdbFile {
         }
     }
 
+    /// Whether this file can hold `ip` at all: an IPv4-only database has no
+    /// IPv6 data, and `maxminddb` reports such a lookup as an error.
+    fn covers(&self, ip: IpAddr) -> bool {
+        ip.is_ipv4() || self.meta.ip_version == 6
+    }
+
     fn city(&self, ip: IpAddr, out: &mut GeoIp) -> Result<bool, MaxMindDbError> {
+        if !self.covers(ip) {
+            return Ok(false);
+        }
         let Some(rec) = self.reader.lookup(ip)?.decode::<CityRecord<'_>>()? else {
             return Ok(false);
         };
@@ -256,6 +265,9 @@ impl MmdbFile {
     }
 
     fn asn(&self, ip: IpAddr, out: &mut GeoIp) -> Result<bool, MaxMindDbError> {
+        if !self.covers(ip) {
+            return Ok(false);
+        }
         let Some(rec) = self.reader.lookup(ip)?.decode::<AsnRecord<'_>>()? else {
             return Ok(false);
         };
@@ -372,6 +384,10 @@ impl MmdbGeo {
 
     /// Everything known about `ip`, or `None` when no loaded database has it.
     /// Decode errors count in [`MmdbGeo::lookup_errors`] and read as "not found".
+    ///
+    /// An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) is looked up as the
+    /// IPv4 address. Other IPv6 addresses read as "not found", not as an
+    /// error, in an IPv4-only database.
     pub fn lookup(&self, ip: IpAddr) -> Option<GeoIp> {
         let ip = match ip {
             IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),

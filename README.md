@@ -26,7 +26,7 @@ enricher.enrich(&mut event);   // writes source|destination.geo.* and .as.*
 ```
 
 - **`MmdbFile`**: a memory-mapped, validated database. `open` runs the full check. `open_installed` checks only the kind and is meant for files that already passed `open`.
-- **`MmdbGeo`**: a City database plus an optional ASN database. It implements uSIEM's `NetworkDataset<GeoIp>` and `GeoIpDataset`. IPv4-mapped IPv6 addresses are looked up as IPv4.
+- **`MmdbGeo`**: a City database plus an optional ASN database. It implements uSIEM's `NetworkDataset<GeoIp>` and `GeoIpDataset`. IPv4-mapped IPv6 addresses are looked up as IPv4, and IPv6 addresses in an IPv4-only database read as "not found".
 - **`GeoHandle`**: the live databases. `swap` and `update` replace them atomically. Readers pay one atomic load per batch.
 - **`GeoEnricher`**: the per-worker step.
   - Writes ECS fields: `geo.country_iso_code`, `geo.country_name`, `geo.city_name`, `geo.location.lat`, `geo.location.lon`, `as.number` and `as.organization.name`.
