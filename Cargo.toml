@@ -2,14 +2,29 @@
 name = "usiem-geoip"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "GeoIP and ASN enrichment for uSIEM events from MaxMind DB (.mmdb) files."
 license = "MIT"
+repository = "https://github.com/u-siem/geoip"
+homepage = "https://github.com/u-siem/geoip"
+readme = "README.md"
+keywords = ["siem", "geoip", "maxmind", "asn", "enrichment"]
+categories = ["network-programming"]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
 
 [dependencies]
-usiem = { path = "../usiem" }
+usiem = { version = "0.1", git = "https://github.com/u-siem/usiem", rev = "853e48b0900612e2cce0ba750adb38d9bb6c2650" }
 maxminddb = { version = "0.32", features = ["mmap"] }
 serde = { version = "1", features = ["derive"] }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [profile.dev.package."*"]
 opt-level = 2
