@@ -7,7 +7,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::sync::Arc;
 use usiem::event::fields as f;
-use usiem::event::{CoreEvent, FieldValue};
+use usiem::event::{Event, FieldValue};
 use usiem::processing::enrichment::GeoIp;
 use usiem::processing::lookup::is_non_public_addr;
 
@@ -106,7 +106,7 @@ impl GeoEnricher {
     /// Adds `source|destination.geo.*` and `.as.*` for public addresses.
     /// Fields already on the event are left as they are. Returns whether
     /// anything was written.
-    pub fn enrich(&mut self, event: &mut CoreEvent) -> bool {
+    pub fn enrich(&mut self, event: &mut Event) -> bool {
         if self.geo.is_unloaded() {
             return false;
         }
@@ -146,7 +146,7 @@ fn ip_of(value: &FieldValue) -> Option<IpAddr> {
     }
 }
 
-fn write(event: &mut CoreEvent, t: &Target, geo: &GeoIp) -> bool {
+fn write(event: &mut Event, t: &Target, geo: &GeoIp) -> bool {
     event.reserve_fields(7);
     let mut wrote = false;
     let mut set = |key: &str, value: Option<FieldValue>| {

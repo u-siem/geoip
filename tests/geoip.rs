@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use usiem::event::{CoreEvent, FieldValue, Ip, Origin, RawData, Timestamp};
+use usiem::event::{Event, FieldValue, Ip, Origin, RawData, Timestamp};
 use usiem::processing::enrichment::{GeoIpDataset, NetworkDataset};
 use usiem_geoip::{GeoEnricher, GeoError, GeoHandle, Kind, MmdbFile, MmdbGeo};
 
@@ -23,9 +23,9 @@ fn ip(s: &str) -> IpAddr {
     s.parse().expect("test address")
 }
 
-fn event(fields: &[(&str, FieldValue)]) -> CoreEvent {
+fn event(fields: &[(&str, FieldValue)]) -> Event {
     let now = Timestamp::now();
-    let mut e = CoreEvent::new(
+    let mut e = Event::new(
         now,
         now,
         Origin::from_hostname("t"),
@@ -37,7 +37,7 @@ fn event(fields: &[(&str, FieldValue)]) -> CoreEvent {
     e
 }
 
-fn text(e: &CoreEvent, key: &str) -> Option<String> {
+fn text(e: &Event, key: &str) -> Option<String> {
     match e.get_field(key)? {
         FieldValue::Str(s) => Some(s.to_string()),
         other => panic!("{key} is {other:?}"),

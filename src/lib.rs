@@ -21,7 +21,7 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use usiem::event::{CoreEvent, FieldValue, Origin, RawData, Timestamp};
+//! use usiem::event::{Event, FieldValue, Origin, RawData, Timestamp};
 //! use usiem_geoip::{GeoEnricher, GeoHandle, Kind, MmdbFile, MmdbGeo};
 //!
 //! // Validate once, when a file arrives.
@@ -32,8 +32,8 @@
 //! // One enricher per worker thread.
 //! let mut enricher = GeoEnricher::new(handle.clone());
 //! let now = Timestamp::now();
-//! let mut event = CoreEvent::new(now, now, Origin::from_hostname("fw"), RawData::Text("".into()));
-//! event.add_field("source.ip".into(), FieldValue::Str("89.160.20.128".into()));
+//! let mut event = Event::new(now, now, Origin::from_hostname("fw"), RawData::Text("".into()));
+//! event.add_field("source.ip", FieldValue::Str("89.160.20.128".into()));
 //!
 //! enricher.refresh(); // once per batch: picks up swapped databases
 //! assert!(enricher.enrich(&mut event));
